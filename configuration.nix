@@ -36,13 +36,19 @@ in {
   services.nginx.enable = true;
   services.nginx.recommendedProxySettings = true;
   services.nginx.recommendedTlsSettings = true;
-  services.nginx.virtualHosts."${sensitive.host.external}" = {
+  services.nginx.virtualHosts."${sensitive.host.external.home}" = {
     forceSSL = true;
     enableACME = true;
     locations."/" = {
       proxyPass = "http://127.0.0.1:8123";
       proxyWebsockets = true;
     };
+  };
+
+  services.nginx.virtualHosts."${sensitive.host.external.personal}" = {
+    forceSSL = true;
+    enableACME = true;
+    globalRedirect = "www.yperman.eu";
   };
 
   security.acme = {
@@ -101,4 +107,8 @@ in {
 
   hardware.enableRedistributableFirmware = true;
   system.stateVersion = "23.11";
+  system.autoUpgrade = {
+    enable = true;
+    allowReboot = true;
+  };
 }
