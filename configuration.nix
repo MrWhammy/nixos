@@ -1,24 +1,23 @@
-{ config, pkgs, lib, ... }:
+# Edit this configuration file to define what should be installed on
+# your system.  Help is available in the configuration.nix(5) man page
+# and in the NixOS manual (accessible by running ‘nixos-help’).
+
+{ config, pkgs, ... }:
+
 
 let
   sensitive = import ./sensitive.nix;
 in {
-  boot = {
-    kernelPackages = pkgs.linuxKernel.packages.linux_rpi4;
-    initrd.availableKernelModules = [ "xhci_pci" "usbhid" "usb_storage" ];
-    loader = {
-      grub.enable = false;
-      generic-extlinux-compatible.enable = true;
-    };
-  };
+  imports =
+    [ # Include the results of the hardware scan.
+      ./hardware-configuration.nix
+    ];
 
-  fileSystems = {
-    "/" = {
-      device = "/dev/disk/by-label/NIXOS_SD";
-      fsType = "ext4";
-      options = [ "noatime" ];
-    };
-  };
+  # Bootloader.
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
+
+  # Enable networking
   networking = {
     hostName = sensitive.host.internal;
     wireless = {
@@ -30,9 +29,32 @@ in {
     };
   };
 
+  # Set your time zone.
   time.timeZone = "Europe/Brussels";
-  
-  environment.systemPackages = with pkgs; [ vim ];
+
+  # Select internationalisation properties.
+  i18n.defaultLocale = "en_US.UTF-8";
+
+  users = {
+    mutableUsers = false;
+    users."${sensitive.user.name}" = {
+      isNormalUser = true;
+      extraGroups = [ "wheel" ];
+      hashedPassword = sensitive.user.hashedPassword;
+      openssh.authorizedKeys.keys = [ sensitive.user.sshKey ];
+    };
+  };
+
+  # List packages installed in system profile. To search, run:
+  # $ nix search wget
+  environment.systemPackages = with pkgs; [
+  #  vim # Do not forget to add an editor to edit configuration.nix! The Nano editor is also installed by default.
+  #  wget
+  ];
+
+  # List services that you want to enable:
+
+  # Enable the OpenSSH daemon.
   services.openssh.enable = true;
 
   services.nginx.enable = true;
@@ -58,19 +80,9 @@ in {
     defaults.email = sensitive.user.acmeEmail;
   };
 
-  users = {
-    mutableUsers = false;
-    users."${sensitive.user.name}" = {
-      isNormalUser = true;
-      extraGroups = [ "wheel" ];
-      hashedPassword = sensitive.user.hashedPassword;
-      openssh.authorizedKeys.keys = [ sensitive.user.sshKey ];
-    };
-  };
-
   virtualisation.oci-containers = {
     backend = "podman";
-    containers.homeassistant = {
+    containers.home-assistant = {
       volumes = [ "home-assistant:/config" ];
       environment.TZ = "Europe/Berlin";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
@@ -109,8 +121,14 @@ in {
     };
   };
 
-  hardware.enableRedistributableFirmware = true;
-  system.stateVersion = "23.11";
+  # This value determines the NixOS release from which the default
+  # settings for stateful data, like file locations and database versions
+  # on your system were taken. It‘s perfectly fine and recommended to leave
+  # this value at the release version of the first install of this system.
+  # Before changing this value read the documentation for this option
+  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
+  system.stateVersion = "23.11"; # Did you read the comment?
+
   system.autoUpgrade = {
     enable = true;
     allowReboot = true;
