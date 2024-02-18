@@ -25,10 +25,12 @@ in {
       enable = false;
     };
     firewall = {
-      allowedTCPPorts = [ 80 443 8080 8443 ]; # For home assistant & unifi
+      allowedTCPPorts = [ 80 443 8080 8123 8443 ]; # For home assistant & unifi
       allowedUDPPorts = [ 3478 5353 ]; # For unifi & home assistant discovery
     };
   };
+
+  time.timeZone = "Europe/Brussels";
   
   environment.systemPackages = with pkgs; [ vim ];
   services.openssh.enable = true;
@@ -74,7 +76,8 @@ in {
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
       extraOptions = [ 
         "--network=host" 
-        "--device=/dev/ttyUSB0:/dev/ttyUSB0"        
+        "--device=/dev/ttyUSB0:/dev/ttyUSB0"
+        "--stop-timeout=30"        
       ];
     };
     containers.unifi = {
@@ -84,6 +87,7 @@ in {
       user = "unifi";
       extraOptions = [
         "--network=host"
+        "--stop-timeout=30"
       ];
     };
   };
