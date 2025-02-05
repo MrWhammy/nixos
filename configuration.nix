@@ -24,7 +24,7 @@ in {
       enable = false;
     };
     firewall = {
-      allowedTCPPorts = [ 80 443 8080 8123 8443 ]; # For home assistant & unifi
+      allowedTCPPorts = [ 80 443 1883 8080 8096 8123 8443 ]; # For home assistant, mosquitto, jellyfin & unifi
       allowedUDPPorts = [ 3478 5353 ]; # For unifi & home assistant discovery
     };
   };
@@ -41,9 +41,18 @@ in {
       isNormalUser = true;
       extraGroups = [ "wheel" ];
       hashedPassword = sensitive.user.hashedPassword;
-      openssh.authorizedKeys.keys = [ sensitive.user.sshKey ];
+      openssh.authorizedKeys.keys = sensitive.user.sshKeys;
     };
   };
+
+  fileSystems."/mnt/media" =
+    { device = "/dev/disk/by-uuid/8d3c8372-19d4-4f65-8eb4-b9ff1c91e689";
+      fsType = "ext4";
+    };
+
+  hardware.graphics.enable = true;
+  hardware.bluetooth.enable = true; # enables support for Bluetooth
+  hardware.bluetooth.powerOnBoot = true; # powers up the default Bluetooth controller on boot
 
   # List packages installed in system profile. To search, run:
   # $ nix search wget
@@ -57,6 +66,8 @@ in {
   # Enable the OpenSSH daemon.
   services.openssh.enable = true;
 
+  services.dbus.implementation = "broker";
+
   services.nginx.enable = true;
   services.nginx.recommendedProxySettings = true;
   services.nginx.recommendedTlsSettings = true;
@@ -69,10 +80,23 @@ in {
     };
   };
 
-  services.nginx.virtualHosts."${sensitive.host.external.personal}" = {
+  services.nginx.virtualHosts."${sensitive.host.external.media}" = {
     forceSSL = true;
     enableACME = true;
-    globalRedirect = "www.yperman.eu";
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:8096";
+      proxyWebsockets = true;
+    };
+  };
+
+  services.nginx.virtualHosts."${sensitive.host.external.bluesky}" = {
+    forceSSL = true;
+    enableACME = true;
+    serverAliases = [ "brecht.${sensitive.host.external.bluesky}" ];
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:3000";
+      proxyWebsockets = true;
+    };
   };
 
   security.acme = {
@@ -83,7 +107,7 @@ in {
   virtualisation.oci-containers = {
     backend = "podman";
     containers.home-assistant = {
-      volumes = [ "home-assistant:/config" ];
+      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" ];
       environment.TZ = "Europe/Berlin";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
       extraOptions = [ 
@@ -101,6 +125,28 @@ in {
         "--network=host"
         "--stop-timeout=30"
       ];
+    };
+    containers.jellyfin = {
+      volumes = [ "jellyfin-cache:/cache:Z" "jellyfin-config:/config:Z" ];
+      environment.TZ = "Europe/Brussels";
+      image = "docker.io/jellyfin/jellyfin:latest";
+      extraOptions = [
+        "--network=host"
+        "--stop-timeout=30"
+        "--device=/dev/dri/renderD128:/dev/dri/renderD128"
+        "--mount=type=bind,source=/mnt/media,destination=/media,ro=true,relabel=private"
+      ];
+    };
+    containers.pds = {
+      image = "ghcr.io/bluesky-social/pds:0.4";
+      volumes = [ "/opt/pds:/pds" ];
+      environmentFiles = [ "/opt/pds/pds.env" ];
+      ports = [ "3000:3000" ];
+    };
+    containers.mosquitto = {
+      image = "eclipse-mosquitto:latest";
+      volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ];
+      ports = [ "1883:1883" "9001:9001" ];
     };
   };
 
@@ -139,4 +185,6 @@ in {
     dates = "weekly";
     options = "--delete-older-than 14d";
   };
+
+  nix.settings.experimental-features = "nix-command";
 }
