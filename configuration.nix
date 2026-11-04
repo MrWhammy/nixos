@@ -43,6 +43,75 @@ in {
       hashedPassword = sensitive.user.hashedPassword;
       openssh.authorizedKeys.keys = sensitive.user.sshKeys;
     };
+
+    # NEW: one dedicated system user per container, so each rootless
+    # container only gets the host access it actually needs.
+    #
+    #  * static uid/gid  -> these users/groups already exist at 980-984
+    #    on this host; NixOS never renumbers existing entries (it only
+    #    warns and keeps the old id), so the config must match
+    #    /etc/passwd and /etc/group exactly. Declared ids are always
+    #    skipped by the auto-allocator, which scans 999 downward.
+    #  * linger          -> the user manager starts at boot, so the
+    #    rootless containers can start without a login session
+    #  * autoSubUidGidRange -> allocates the /etc/subuid & /etc/subgid
+    #    entries rootless podman requires
+    groups = {
+      homeassistant.gid = 980;
+      unifi.gid = 981;
+      jellyfin.gid = 982;
+      pds.gid = 983;
+      mosquitto.gid = 984;
+    };
+    users = {
+      homeassistant = {
+        uid = 980;
+        isSystemUser = true;
+        group = "homeassistant";
+        home = "/var/lib/homeassistant"; # rootless podman stores images & volumes here
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+        extraGroups = [ "dialout" ]; # /dev/ttyUSB0 is root:dialout 0660
+      };
+      unifi = {
+        uid = 981;
+        isSystemUser = true;
+        group = "unifi";
+        home = "/var/lib/unifi";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      jellyfin = {
+        uid = 982;
+        isSystemUser = true;
+        group = "jellyfin";
+        home = "/var/lib/jellyfin";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+        extraGroups = [ "render" ]; # /dev/dri/renderD128 (usually 0666, group as a safety net)
+      };
+      pds = {
+        uid = 983;
+        isSystemUser = true;
+        group = "pds";
+        home = "/var/lib/pds";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      mosquitto = {
+        uid = 984;
+        isSystemUser = true;
+        group = "mosquitto";
+        home = "/var/lib/mosquitto";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+    };
   };
 
   fileSystems."/mnt/media" =
@@ -158,8 +227,9 @@ in {
       ports = [ "3000:3000" ];
     };
     containers.mosquitto = {
+      podman.user = "mosquitto"; # NEW: run rootless as this user
       image = "eclipse-mosquitto:latest";
-      volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ];
+      volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ]; # chown -R mosquitto:mosquitto /opt/mosquitto
       ports = [ "1883:1883" "9001:9001" ];
     };
     containers.portainer = {
