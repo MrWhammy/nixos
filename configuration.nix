@@ -116,7 +116,7 @@ in {
   virtualisation.oci-containers = {
     backend = "podman";
     containers.home-assistant = {
-      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" "/opt/bmw-cardata-ha/custom_components/cardata:/config/custom_components/cardata" "/opt/smappee_ev/custom_components/smappee_ev:/config/custom_components/smappee_ev" ];
+      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" ];
       environment.TZ = "Europe/Brussels";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
       capabilities = {
