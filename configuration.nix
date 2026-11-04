@@ -24,7 +24,7 @@ in {
       enable = false;
     };
     firewall = {
-      allowedTCPPorts = [ 80 443 1883 8080 8096 8123 8443 ]; # For home assistant, mosquitto, jellyfin & unifi
+      allowedTCPPorts = [ 80 443 1883 6052 8080 8096 8123 8443 9443 ]; # For home assistant, mosquitto, jellyfin, unifi, esphome
       allowedUDPPorts = [ 3478 5353 ]; # For unifi & home assistant discovery
     };
   };
@@ -59,6 +59,7 @@ in {
   environment.systemPackages = with pkgs; [
   #  vim # Do not forget to add an editor to edit configuration.nix! The Nano editor is also installed by default.
   #  wget
+    git
   ];
 
   # List services that you want to enable:
@@ -99,6 +100,14 @@ in {
     };
   };
 
+  services.ddclient = {
+    enable = true;
+    protocol = "cloudflare";
+    zone = "${sensitive.host.external.cloudflare.zone}";
+    passwordFile = "/opt/cloudflare_token";
+    domains = ["${sensitive.host.external.cloudflare.domain}"];
+  };
+
   security.acme = {
     acceptTerms = true;
     defaults.email = sensitive.user.acmeEmail;
@@ -107,18 +116,23 @@ in {
   virtualisation.oci-containers = {
     backend = "podman";
     containers.home-assistant = {
-      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" ];
-      environment.TZ = "Europe/Berlin";
+      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" "/opt/bmw-cardata-ha/custom_components/cardata:/config/custom_components/cardata" "/opt/smappee_ev/custom_components/smappee_ev:/config/custom_components/smappee_ev" ];
+      environment.TZ = "Europe/Brussels";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
+      capabilities = {
+        NET_ADMIN = true;
+        NET_RAW = true;
+      };
       extraOptions = [ 
         "--network=host" 
         "--device=/dev/ttyUSB0:/dev/ttyUSB0"
+        "--device=/dev/ttyACM0:/dev/ttyACM0"
         "--stop-timeout=30"        
       ];
     };
     containers.unifi = {
       volumes = [ "unifi:/unifi" ];
-      environment.TZ = "Europe/Berlin";
+      environment.TZ = "Europe/Brussels";
       image = "jacobalberty/unifi";
       user = "unifi";
       extraOptions = [
@@ -148,22 +162,33 @@ in {
       volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ];
       ports = [ "1883:1883" "9001:9001" ];
     };
-  };
-
-  systemd = {
-    timers.duckdns = {
-      wantedBy = [ "timers.target" ];
-      partOf = [ "duckdns.service" ];
-      timerConfig.OnCalendar = "hourly";
+    containers.portainer = {
+      volumes = [ "/run/podman/podman.sock:/var/run/docker.sock" "portainer_data:/data" ];
+      image = "portainer/portainer-ce:lts";
+      ports = [ "8000:8000" "9443:9443" ];
     };
-    services.duckdns = {
-      serviceConfig.Type = "oneshot";
-      path = [
-        pkgs.curl
+    containers.whisper = {
+      image = "rhasspy/wyoming-whisper";
+      ports = [ "10300:10300" ];
+      volumes = [ "/opt/whisper:/data" ];
+      cmd = [
+        "--model" "tiny-int8"
+        "--language" "en"
       ];
-      script = ''
-        echo url="https://www.duckdns.org/update?domains=${sensitive.duckdns.domain}&token=${sensitive.duckdns.token}&ip=" | curl -k -o /tmp/duckdns.log -K -
-      '';
+    };
+    containers.piper = {
+      volumes = [ "/opt/piper:/data" ];
+      ports = [ "5000:5000" "10200:10200" ];
+      image = "rhasspy/wyoming-piper";
+      cmd = [ 
+        "--voice" "en_US-lessac-medium"
+      ];
+    };
+    containers.esphome = {
+       volumes = [ "/opt/esphome:/config" ];
+       ports = [ "6052:6052" ];
+       image = "ghcr.io/esphome/esphome";
+       environment.ESPHOME_DASHBOARD_USE_PING = "true";
     };
   };
 
