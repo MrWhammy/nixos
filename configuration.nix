@@ -47,11 +47,14 @@ in {
     # NEW: one dedicated system user per container, so each rootless
     # container only gets the host access it actually needs.
     #
-    #  * static uid/gid  -> these users/groups already exist at 980-984
-    #    on this host; NixOS never renumbers existing entries (it only
-    #    warns and keeps the old id), so the config must match
-    #    /etc/passwd and /etc/group exactly. Declared ids are always
-    #    skipped by the auto-allocator, which scans 999 downward.
+    #  * static uid/gid  -> ids 980-984 already exist on this host;
+    #    NixOS never renumbers existing entries (it only warns and
+    #    keeps the old id), so the config must match /etc/passwd and
+    #    /etc/group exactly. Declared ids are always skipped by the
+    #    auto-allocator, which scans 999 downward. Verify 985-988 are
+    #    free before the first deploy:
+    #    getent passwd | awk -F: '$3 >= 985 && $3 <= 988'
+    #    getent group | awk -F: '$3 >= 985 && $3 <= 988'
     #  * linger          -> the user manager starts at boot, so the
     #    rootless containers can start without a login session
     #  * autoSubUidGidRange -> allocates the /etc/subuid & /etc/subgid
@@ -62,6 +65,10 @@ in {
       jellyfin.gid = 982;
       pds.gid = 983;
       mosquitto.gid = 984;
+      portainer.gid = 985;
+      whisper.gid = 986;
+      piper.gid = 987;
+      esphome.gid = 988;
     };
     users = {
       homeassistant = {
@@ -72,7 +79,7 @@ in {
         createHome = true;
         linger = true;
         autoSubUidGidRange = true;
-        extraGroups = [ "dialout" ]; # /dev/ttyUSB0 is root:dialout 0660
+        extraGroups = [ "dialout" ]; # /dev/ttyUSB0 & /dev/ttyACM0 are root:dialout 0660
       };
       unifi = {
         uid = 981;
@@ -107,6 +114,42 @@ in {
         isSystemUser = true;
         group = "mosquitto";
         home = "/var/lib/mosquitto";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      portainer = {
+        uid = 985;
+        isSystemUser = true;
+        group = "portainer";
+        home = "/var/lib/portainer";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      whisper = {
+        uid = 986;
+        isSystemUser = true;
+        group = "whisper";
+        home = "/var/lib/whisper";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      piper = {
+        uid = 987;
+        isSystemUser = true;
+        group = "piper";
+        home = "/var/lib/piper";
+        createHome = true;
+        linger = true;
+        autoSubUidGidRange = true;
+      };
+      esphome = {
+        uid = 988;
+        isSystemUser = true;
+        group = "esphome";
+        home = "/var/lib/esphome";
         createHome = true;
         linger = true;
         autoSubUidGidRange = true;
@@ -185,6 +228,9 @@ in {
   virtualisation.oci-containers = {
     backend = "podman";
     containers.home-assistant = {
+      # podman.user = "homeassistant"; # do LAST: volume migration + device tests
+      # (note: NET_ADMIN/NET_RAW are namespaced/unavailable under rootless;
+      # revisit whether the integrations that needed them still work)
       volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" ];
       environment.TZ = "Europe/Brussels";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
@@ -200,6 +246,8 @@ in {
       ];
     };
     containers.unifi = {
+      # podman.user = "unifi"; # enable after volume migration:
+      # migrate "unifi" volume, then podman unshare chown -R 999:999
       volumes = [ "unifi:/unifi" ];
       environment.TZ = "Europe/Brussels";
       image = "jacobalberty/unifi";
@@ -210,34 +258,52 @@ in {
       ];
     };
     containers.jellyfin = {
+      # podman.user = "jellyfin"; # NEXT: enable after volume migration (see migration steps)
       volumes = [ "jellyfin-cache:/cache:Z" "jellyfin-config:/config:Z" ];
       environment.TZ = "Europe/Brussels";
       image = "docker.io/jellyfin/jellyfin:latest";
       extraOptions = [
         "--network=host"
         "--stop-timeout=30"
+        # Render node access via the render group on the jellyfin user.
         "--device=/dev/dri/renderD128:/dev/dri/renderD128"
-        "--mount=type=bind,source=/mnt/media,destination=/media,ro=true,relabel=private"
+        # CHANGED: dropped relabel=private — under rootless it idmap-remaps
+        # UIDs outside jellyfin's subuid range, making /mnt/media unreadable.
+        # /mnt/media must be readable by the jellyfin user instead
+        # (e.g. sudo chmod -R a+rX /mnt/media). Harmless while still rootful.
+        "--mount=type=bind,source=/mnt/media,destination=/media,ro=true"
       ];
     };
     containers.pds = {
+      podman.user = "pds"; # run rootless as the pds user
       image = "ghcr.io/bluesky-social/pds:0.4";
-      volumes = [ "/opt/pds:/pds" ];
+      volumes = [ "/opt/pds:/pds" ]; # needs: chown -R pds:pds /opt/pds
       environmentFiles = [ "/opt/pds/pds.env" ];
-      ports = [ "3000:3000" ];
+      # loopback only: nginx on the host is the only consumer
+      ports = [ "127.0.0.1:3000:3000" ];
     };
     containers.mosquitto = {
-      podman.user = "mosquitto"; # NEW: run rootless as this user
+      podman.user = "mosquitto"; # rootless — done
       image = "eclipse-mosquitto:latest";
-      volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ]; # chown -R mosquitto:mosquitto /opt/mosquitto
+      # The broker drops to the in-container "mosquitto" user (uid 1883),
+      # so writable bind mounts need (run from /, with HOME set):
+      #   sudo -u mosquitto env HOME=/var/lib/mosquitto XDG_RUNTIME_DIR=/run/user/984 \
+      #     podman unshare chown -R 1883:1883 /opt/mosquitto/config /opt/mosquitto/log
+      volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ];
       ports = [ "1883:1883" "9001:9001" ];
     };
     containers.portainer = {
+      # NOTE: this mounts the ROOTFUL podman socket, which is
+      # root-equivalent access — and it can only manage rootful
+      # containers anyway, so running it rootless buys little.
+      # Decide later whether it stays rootful or goes away entirely.
+      # podman.user = "portainer"; # only meaningful with a socket rethink
       volumes = [ "/run/podman/podman.sock:/var/run/docker.sock" "portainer_data:/data" ];
       image = "portainer/portainer-ce:lts";
       ports = [ "8000:8000" "9443:9443" ];
     };
     containers.whisper = {
+      # podman.user = "whisper"; # easy: chown -R whisper:whisper /opt/whisper first
       image = "rhasspy/wyoming-whisper";
       ports = [ "10300:10300" ];
       volumes = [ "/opt/whisper:/data" ];
@@ -247,6 +313,7 @@ in {
       ];
     };
     containers.piper = {
+      # podman.user = "piper"; # easy: chown -R piper:piper /opt/piper first
       volumes = [ "/opt/piper:/data" ];
       ports = [ "5000:5000" "10200:10200" ];
       image = "rhasspy/wyoming-piper";
@@ -255,10 +322,13 @@ in {
       ];
     };
     containers.esphome = {
-       volumes = [ "/opt/esphome:/config" ];
-       ports = [ "6052:6052" ];
-       image = "ghcr.io/esphome/esphome";
-       environment.ESPHOME_DASHBOARD_USE_PING = "true";
+      # podman.user = "esphome"; # chown -R esphome:esphome /opt/esphome first;
+      # note: dashboard pings (ESPHOME_DASHBOARD_USE_PING) may not work
+      # rootless — set it to "false" if device status shows offline
+      volumes = [ "/opt/esphome:/config" ];
+      ports = [ "6052:6052" ];
+      image = "ghcr.io/esphome/esphome";
+      environment.ESPHOME_DASHBOARD_USE_PING = "true";
     };
   };
 
