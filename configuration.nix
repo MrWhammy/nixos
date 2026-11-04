@@ -65,7 +65,6 @@ in {
       jellyfin.gid = 982;
       pds.gid = 983;
       mosquitto.gid = 984;
-      portainer.gid = 985;
       whisper.gid = 986;
       piper.gid = 987;
       esphome.gid = 988;
@@ -114,15 +113,6 @@ in {
         isSystemUser = true;
         group = "mosquitto";
         home = "/var/lib/mosquitto";
-        createHome = true;
-        linger = true;
-        autoSubUidGidRange = true;
-      };
-      portainer = {
-        uid = 985;
-        isSystemUser = true;
-        group = "portainer";
-        home = "/var/lib/portainer";
         createHome = true;
         linger = true;
         autoSubUidGidRange = true;
@@ -258,7 +248,7 @@ in {
       ];
     };
     containers.jellyfin = {
-      # podman.user = "jellyfin"; # NEXT: enable after volume migration (see migration steps)
+      podman.user = "jellyfin"; # NEXT: enable after volume migration (see migration steps)
       volumes = [ "jellyfin-cache:/cache:Z" "jellyfin-config:/config:Z" ];
       environment.TZ = "Europe/Brussels";
       image = "docker.io/jellyfin/jellyfin:latest";
@@ -291,16 +281,6 @@ in {
       #     podman unshare chown -R 1883:1883 /opt/mosquitto/config /opt/mosquitto/log
       volumes = [ "/opt/mosquitto:/mosquitto" "/opt/mosquitto/data:/mosquitto/data" "/opt/mosquitto/log:/mosquitto/log" ];
       ports = [ "1883:1883" "9001:9001" ];
-    };
-    containers.portainer = {
-      # NOTE: this mounts the ROOTFUL podman socket, which is
-      # root-equivalent access — and it can only manage rootful
-      # containers anyway, so running it rootless buys little.
-      # Decide later whether it stays rootful or goes away entirely.
-      # podman.user = "portainer"; # only meaningful with a socket rethink
-      volumes = [ "/run/podman/podman.sock:/var/run/docker.sock" "portainer_data:/data" ];
-      image = "portainer/portainer-ce:lts";
-      ports = [ "8000:8000" "9443:9443" ];
     };
     containers.whisper = {
       # podman.user = "whisper"; # easy: chown -R whisper:whisper /opt/whisper first
