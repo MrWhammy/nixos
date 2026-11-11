@@ -169,6 +169,15 @@ in {
   # Enable the OpenSSH daemon.
   services.openssh.enable = true;
 
+  # Rootless HA's serial sticks (Zigbee/Z-Wave): host supplementary
+  # groups like "dialout" are not carried into the container's user
+  # namespace, so group-based device access breaks with EACCES.
+  # Give HA's user direct ownership of the sticks instead.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="tty", KERNEL=="ttyACM0", OWNER="homeassistant", GROUP="homeassistant", MODE="0660"
+    SUBSYSTEM=="tty", KERNEL=="ttyUSB0", OWNER="homeassistant", GROUP="homeassistant", MODE="0660"
+  '';
+
   services.dbus.implementation = "broker";
 
   services.nginx.enable = true;
@@ -218,16 +227,10 @@ in {
   virtualisation.oci-containers = {
     backend = "podman";
     containers.home-assistant = {
-      # podman.user = "homeassistant"; # do LAST: volume migration + device tests
-      # (note: NET_ADMIN/NET_RAW are namespaced/unavailable under rootless;
-      # revisit whether the integrations that needed them still work)
-      volumes = [ "home-assistant:/config" "/run/dbus:/run/dbus:ro" ];
+      podman.user = "homeassistant"; # do LAST: volume migration + device tests
+      volumes = [ "home-assistant:/config" ];
       environment.TZ = "Europe/Brussels";
       image = "ghcr.io/home-assistant/home-assistant:stable"; 
-      capabilities = {
-        NET_ADMIN = true;
-        NET_RAW = true;
-      };
       extraOptions = [ 
         "--network=host" 
         "--device=/dev/ttyUSB0:/dev/ttyUSB0"
